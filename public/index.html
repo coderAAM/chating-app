@@ -1,0 +1,499 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Chat</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f0f0f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-container {
+      max-width: 800px;
+      margin: 0 auto;   
+      background: white;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+
+    .chat-header {
+      background: #075e54;
+      color: white;
+      padding: 16px;
+      font-size: 18px;
+      font-weight: 500;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .clear-chat-btn {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 6px 12px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .clear-chat-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      background: #e5ddd5;
+    }
+
+    .message {
+      margin-bottom: 12px;
+      display: flex;
+    }
+
+    .message.sent {
+      justify-content: flex-end;
+    }
+
+    .message.received {
+      justify-content: flex-start;
+    }
+
+    .message-bubble {
+      max-width: 70%;
+      padding: 8px 12px;
+      border-radius: 8px;
+      position: relative;
+      word-wrap: break-word;
+    }
+
+    .message.sent .message-bubble {
+      background: #dcf8c6;
+      color: #303030;
+    }
+
+    .message.received .message-bubble {
+      background: white;
+      color: #303030;
+    }
+
+    .message-meta {
+      font-size: 11px;
+      color: #999;
+      margin-top: 4px;
+      text-align: right;
+    }
+
+    .message-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+      justify-content: flex-end;
+    }
+
+    .message.sent .message-actions {
+      justify-content: flex-end;
+    }
+
+    .message.received .message-actions {
+      justify-content: flex-start;
+    }
+
+    .action-btn {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .action-btn:hover {
+      background: rgba(0,0,0,0.1);
+    }
+
+    .delete-btn:hover {
+      color: #ff4444;
+    }
+
+    .edit-btn:hover {
+      color: #25d366;
+    }
+
+    .message.sent .message-meta {
+      text-align: right;
+    }
+
+    .message.received .message-meta {
+      text-align: left;
+    }
+
+    .chat-input-area {
+      padding: 16px;
+      background: #f0f0f0;
+      border-top: 1px solid #ddd;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .user-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 25px;
+      outline: none;
+      font-size: 14px;
+    }
+
+    .message-input {
+      flex: 3;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 25px;
+      outline: none;
+      font-size: 14px;
+      resize: none;
+    }
+
+    .send-btn {
+      padding: 12px 24px;
+      background: #25d366;
+      color: white;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .send-btn:hover {
+      background: #128c7e;
+    }
+
+    .status {
+      padding: 8px 16px;
+      background: #25d366;
+      color: white;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .typing {
+      font-style: italic;
+      color: #666;
+      padding: 4px 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div class="chat-header">
+      <span>WhatsApp Chat - Live Messages</span>
+      <button id="clearChatBtn" class="clear-chat-btn">Clear Chat</button>
+    </div>
+
+    <div id="status" class="status">Connecting...</div>
+
+    <div id="messages" class="chat-messages"></div>
+
+    <div class="chat-input-area">
+      <input type="text" id="userInput" class="user-input" placeholder="Your name (optional)">
+      <textarea id="messageInput" class="message-input" placeholder="Type a message..." rows="1"></textarea>
+      <button id="sendBtn" class="send-btn">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    const messagesContainer = document.getElementById('messages');
+    const messageInput = document.getElementById('messageInput');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearChatBtn = document.getElementById('clearChatBtn');
+    const statusDiv = document.getElementById('status');
+
+    // Track current user
+    let currentUser = userInput.value.trim() || 'Anonymous';
+
+    // Update current user when name changes
+    userInput.addEventListener('input', function() {
+      const oldUser = currentUser;
+      currentUser = this.value.trim() || 'Anonymous';
+
+      // If user name changed, refresh message actions
+      if (oldUser !== currentUser) {
+        refreshMessageActions();
+      }
+    });
+
+    function refreshMessageActions() {
+      // Remove all existing action buttons
+      document.querySelectorAll('.message-actions').forEach(actions => actions.remove());
+
+      // Re-add action buttons for current user's messages
+      document.querySelectorAll('.message').forEach(messageDiv => {
+        const messageId = messageDiv.dataset.messageId;
+        const userElement = messageDiv.querySelector('.message-meta');
+        if (userElement) {
+          const userText = userElement.textContent;
+          const userName = userText.split(' • ')[0]; // Extract username from "username • timestamp"
+
+          if (userName === currentUser) {
+            const bubbleDiv = messageDiv.querySelector('.message-bubble');
+            const textDiv = messageDiv.querySelector('.message-text');
+            const metaDiv = messageDiv.querySelector('.message-meta');
+
+            if (bubbleDiv && textDiv && metaDiv) {
+              const actionsDiv = document.createElement('div');
+              actionsDiv.className = 'message-actions';
+
+              const editBtn = document.createElement('button');
+              editBtn.className = 'action-btn edit-btn';
+              editBtn.textContent = 'Edit';
+              editBtn.onclick = () => editMessage(messageId, textDiv);
+
+              const deleteBtn = document.createElement('button');
+              deleteBtn.className = 'action-btn delete-btn';
+              deleteBtn.textContent = 'Delete';
+              deleteBtn.onclick = () => deleteMessage(messageId, messageDiv);
+
+              actionsDiv.appendChild(editBtn);
+              actionsDiv.appendChild(deleteBtn);
+
+              messageDiv.appendChild(actionsDiv);
+            }
+          }
+        }
+      });
+    }
+
+    // Auto-resize textarea
+    messageInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = this.scrollHeight + 'px';
+    });
+
+    function addMessage(message, isSent = false) {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${isSent ? 'sent' : 'received'}`;
+      messageDiv.dataset.messageId = message.id;
+
+      const bubbleDiv = document.createElement('div');
+      bubbleDiv.className = 'message-bubble';
+
+      const textDiv = document.createElement('div');
+      textDiv.textContent = message.text;
+      textDiv.className = 'message-text';
+
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'message-meta';
+      metaDiv.textContent = `${message.user} • ${new Date(message.t).toLocaleTimeString()}`;
+
+      // Only show edit/delete buttons for messages sent by current user
+      if (message.user === currentUser) {
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'message-actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'action-btn edit-btn';
+        editBtn.textContent = 'Edit';
+        editBtn.onclick = () => editMessage(message.id, textDiv);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'action-btn delete-btn';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.onclick = () => deleteMessage(message.id, messageDiv);
+
+        actionsDiv.appendChild(editBtn);
+        actionsDiv.appendChild(deleteBtn);
+
+        bubbleDiv.appendChild(textDiv);
+        messageDiv.appendChild(bubbleDiv);
+        messageDiv.appendChild(metaDiv);
+        messageDiv.appendChild(actionsDiv);
+      } else {
+        bubbleDiv.appendChild(textDiv);
+        messageDiv.appendChild(bubbleDiv);
+        messageDiv.appendChild(metaDiv);
+      }
+
+      messagesContainer.appendChild(messageDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    socket.on('connect', () => {
+      console.log('Connected to server', socket.id);
+      statusDiv.textContent = '🟢 Connected';
+      statusDiv.style.background = '#25d366';
+    });
+
+    socket.on('disconnect', () => {
+      statusDiv.textContent = '🔴 Disconnected';
+      statusDiv.style.background = '#ff4444';
+    });
+
+    socket.on('notes:init', (messages) => {
+      messagesContainer.innerHTML = '';
+      messages.forEach(message => addMessage(message, false));
+    });
+
+    socket.on('notes:new', (message) => {
+      addMessage(message, false);
+    });
+
+    function sendMessage() {
+      const text = messageInput.value.trim();
+      if (!text) return;
+
+      const user = userInput.value.trim() || 'Anonymous';
+      const message = { text, user, t: new Date().toISOString() };
+
+      // Add to UI immediately (optimistic update)
+      addMessage(message, true);
+
+      // Send to server
+      socket.emit('notes:create', { text, user });
+
+      // Clear input
+      messageInput.value = '';
+      messageInput.style.height = 'auto';
+      messageInput.focus();
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Focus on message input when page loads
+    window.addEventListener('load', () => {
+      userInput.focus();
+
+      // Ensure clear button event listener is properly attached
+      if (clearChatBtn) {
+        clearChatBtn.addEventListener('click', clearChat);
+      }
+    });
+
+    function deleteMessage(messageId, messageDiv) {
+      if (confirm('کیا آپ واقعی یہ پیغام حذف کرنا چاہتے ہیں؟')) {
+        socket.emit('notes:delete', { id: messageId, user: currentUser });
+        // Optimistically remove from UI
+        messageDiv.remove();
+      }
+    }
+
+    function editMessage(messageId, textDiv) {
+      const currentText = textDiv.textContent;
+      const input = document.createElement('textarea');
+      input.value = currentText;
+      input.className = 'edit-input';
+      input.style.width = '100%';
+      input.style.minHeight = '60px';
+      input.style.border = '1px solid #ddd';
+      input.style.borderRadius = '4px';
+      input.style.padding = '8px';
+      input.style.resize = 'vertical';
+
+      const saveBtn = document.createElement('button');
+      saveBtn.textContent = 'Save';
+      saveBtn.className = 'action-btn';
+      saveBtn.style.background = '#25d366';
+      saveBtn.style.color = 'white';
+      saveBtn.style.marginTop = '4px';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.className = 'action-btn';
+      cancelBtn.style.marginTop = '4px';
+      cancelBtn.style.marginLeft = '8px';
+
+      const container = document.createElement('div');
+      container.appendChild(input);
+      container.appendChild(saveBtn);
+      container.appendChild(cancelBtn);
+
+      const originalContent = textDiv.innerHTML;
+      textDiv.innerHTML = '';
+      textDiv.appendChild(container);
+
+      input.focus();
+      input.select();
+
+      saveBtn.onclick = () => {
+        const newText = input.value.trim();
+        if (newText && newText !== currentText) {
+          socket.emit('notes:update', { id: messageId, text: newText, user: currentUser });
+          textDiv.textContent = newText;
+        } else {
+          textDiv.innerHTML = originalContent;
+        }
+      };
+
+      cancelBtn.onclick = () => {
+        textDiv.innerHTML = originalContent;
+      };
+
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          saveBtn.click();
+        } else if (e.key === 'Escape') {
+          cancelBtn.click();
+        }
+      };
+    }
+
+    // Handle message updates from server
+    socket.on('notes:updated', (message) => {
+      const messageDiv = document.querySelector(`[data-message-id="${message.id}"]`);
+      if (messageDiv) {
+        const textDiv = messageDiv.querySelector('.message-text');
+        if (textDiv) {
+          textDiv.textContent = message.text;
+        }
+      }
+    });
+
+    // Handle message deletions from server
+    socket.on('notes:deleted', (messageId) => {
+      const messageDiv = document.querySelector(`[data-message-id="${messageId}"]`);
+      if (messageDiv) {
+        messageDiv.remove();
+      }
+    });
+
+    // Handle clear chat from server
+    socket.on('notes:cleared', () => {
+      messagesContainer.innerHTML = '';
+    });
+
+    function clearChat() {
+      if (confirm('کیا آپ واقعی تمام پیغامات حذف کرنا چاہتے ہیں؟ یہ عمل قابل واپسی نہیں ہے۔')) {
+        socket.emit('notes:clear');
+      }
+    }
+  </script>
+</body>
+</html>
